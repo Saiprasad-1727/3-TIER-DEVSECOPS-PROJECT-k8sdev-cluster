@@ -1,0 +1,108 @@
+pipeline {
+    agent any
+    
+    tools {
+        nodejs 'Nodejs23'
+    }
+
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+    stages {
+        stage('git checkout') {
+            steps {
+                git branch: 'deploy-to-dev-k8', url: 'https://github.com/jaiswaladi246/3-Tier-DevSecOps-Mega-Project.git'
+            }
+        }
+        stage('FrontEnd Compilation') {
+            steps {
+                dir('client') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
+            }
+        }
+        stage('Backend Compilation') {
+            steps {
+                dir('api') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
+            }
+        }
+        stage('Gitleaks scan') {
+            steps {
+                sh 'gitleaks detect --source ./client --exit-code 1'
+                sh 'gitleaks detect --source ./api --exit-code 1'
+            }
+        }
+        stage('SonarQube-Analysis') {
+            steps {
+                withSonarQubeEnv('Sonar') {
+                    sh '''$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=NodeJS-project \
+                            -Dsonar.projectKey=NodeJS-Project '''
+                }
+            }
+        }
+        stage('Quality-Gate-Check') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage('Trivy fs Scan'){
+            steps {
+                sh 'trivy fs --format table -o fs-report.html .'
+            }
+        }
+        stage('build-Tag & push backend Docker image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        dir('api') {
+                            sh 'docker build -t saiprasad1727/backend:latest .'
+                            sh 'trivy image --format table -o backend-image-report.html saiprasad1727/backend:latest'
+                            sh 'docker push saiprasad1727/backend:latest'
+                        }
+                    }
+                }
+            }
+        }
+        stage('build-Tag & push frontend Docker image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        dir('client') {
+                            sh 'docker build -t saiprasad1727/frontend:latest .'
+                            sh 'trivy image --format table -o frontend-image-report.html saiprasad1727/frontend:latest'
+                            sh 'docker push saiprasad1727/frontend:latest'
+                        }
+                    }
+                }
+            }
+        }
+        stage('k8-deply') {
+            steps {
+                script {
+                    withKubeConfig(caCertificate: '', clusterName: ' devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'dev-cluster', restrictKubeConfigAccess: false, serverUrl: 'https://BA523D89DC002B42FF80F6D8242E7D9E.gr7.ap-south-1.eks.amazonaws.com') {
+                            sh 'kubectl apply -f k8s-dev/sc.yaml -n dev-cluster'
+                            sh 'kubectl apply -f k8s-dev/mysql.yaml -n dev-cluster'
+                            sh 'kubectl apply -f k8s-dev/backend.yaml -n dev-cluster'
+                            sh 'kubectl apply -f k8s-dev/frontend.yaml -n dev-cluster'
+                            sleep 30
+                    }
+                }
+            }
+        }
+        stage('k8-verify-deploy') {
+            steps {
+                script {
+                    withKubeConfig(caCertificate: '', clusterName: ' devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'dev-cluster', restrictKubeConfigAccess: false, serverUrl: 'https://BA523D89DC002B42FF80F6D8242E7D9E.gr7.ap-south-1.eks.amazonaws.com') {
+                            sh 'kubectl get pods -n dev-cluster'
+                            sh 'kubectl get svc -n dev-cluster'
+                            sleep 30
+                    }
+                }
+            }
+        }
+    }
+}

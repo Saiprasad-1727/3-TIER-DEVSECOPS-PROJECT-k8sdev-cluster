@@ -1,13 +1,10 @@
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  namespace: prod
-  labels:
-    app: frontend
+  namespace: dev-cluster
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: frontend
@@ -25,12 +22,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: frontend-svc
-  namespace: prod
+  name: frontend
+  namespace: dev-cluster
 spec:
   selector:
     app: frontend
   ports:
     - port: 80
       targetPort: 80
-  type: ClusterIP
+  type: LoadBalancer
